@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Code Agent (Web)",
+  "description": "A React-based web interface simulating the Gemini Code Agent CLI, allowing users to interact with a Gemini-powered coding assistant using a simulated file system and terminal-like experience.",
+  "requestFramePermissions": []
+}

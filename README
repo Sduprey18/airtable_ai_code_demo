@@ -1,0 +1,65 @@
+# Gemini Code Agent (CLI)
+
+A local command-line interface (CLI) coding assistant powered by Google's Gemini models. This tool allows you to interact with an LLM directly in your terminal to generate code, discuss architecture, and perform file operations (coming soon).
+
+## Prerequisites
+
+- **Node.js**: v18 or higher
+- **Google Gemini API Key**: Get one for free at [aistudio.google.com](https://aistudio.google.com/)
+
+## Installation
+
+1.  **Install Dependencies**
+    ```bash
+    npm install
+    ```
+
+2.  **Environment Setup**
+    Create a `.env` file in the root directory (or copy the template):
+    ```bash
+    cp .env.template .env
+    ```
+    
+    Open `.env` and paste your API key:
+    ```env
+    API_KEY=your_actual_api_key_here
+    ```
+
+3.  **Build the Project**
+    Compile the TypeScript code to JavaScript:
+    ```bash
+    npm run build
+    ```
+
+## Usage
+
+To start the interactive agent session:
+
+```bash
+npm start
+```
+
+Or run the built CLI directly:
+
+```bash
+node dist/cli/index.js start
+```
+
+### Development Mode
+
+To watch for file changes and recompile automatically:
+
+```bash
+npm run dev
+```
+
+## Features
+
+- **Interactive Chat**: Discuss code and architecture with Gemini 2.0 Flash.
+- **Safety First**: (Upcoming) All file operations and commands are previewed and require confirmation.
+- **Context Aware**: Runs locally in your Node.js environment.
+
+## Troubleshooting
+
+- **"API_KEY is not set"**: Ensure your `.env` file exists in the root and contains a valid key.
+- **Permission Errors**: Ensure you have read/write permissions in the directory where you run the agent.
