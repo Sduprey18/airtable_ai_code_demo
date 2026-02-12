@@ -25,7 +25,7 @@ export class Agent {
 
     // Initialize chat session
     this.chat = this.client.chats.create({
-      model: 'gemini-3-flash-preview', // Stronger model for coding tasks
+      model: 'gemini-2.5-pro', // Stronger model for coding tasks
       config: {
         systemInstruction: "You are a senior software engineer. You have access to tools to read files, edit files (create/update), list directories, and run terminal commands. When asked to do something, use these tools to perform the action on the user's system. Always check if files exist before reading. Be concise.",
         tools: [{ functionDeclarations: toolsDef }],
