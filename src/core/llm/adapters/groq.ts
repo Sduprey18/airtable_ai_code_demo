@@ -3,6 +3,9 @@ import type { ProviderConfig } from '../../config.js';
 import type { LLMProvider, NormalizedMessage, NeutralToolDef, ToolCall, TurnResponse } from '../types.js';
 import { neutralToOpenAI } from '../../tools.js';
 
+const GROQ_TOOL_INSTRUCTION =
+  'When the user asks to create, write, or "make" a file (in any language or vaguely, e.g. "make a file in c that prints hello world"), you must actually create the file by outputting a single tool call in this exact format: <function=edit_file{"path":"filename.ext","content":"..."}> with the real path and full file content. Do not reply with only code and instructions—use this tool call so the file is created.';
+
 type GroqMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string }
@@ -11,9 +14,12 @@ type GroqMessage =
 
 function normalizedMessagesToGroq(messages: NormalizedMessage[]): GroqMessage[] {
   const out: GroqMessage[] = [];
+  let systemAppended = false;
   for (const msg of messages) {
     if (msg.role === 'system') {
-      out.push({ role: 'system', content: msg.content });
+      const content = systemAppended ? msg.content : msg.content + '\n\n' + GROQ_TOOL_INSTRUCTION;
+      if (!systemAppended) systemAppended = true;
+      out.push({ role: 'system', content });
       continue;
     }
     if (msg.role === 'user') {
@@ -122,6 +128,68 @@ function repairMalformedToolCalls(text: string): { calls: ToolCall[]; strippedTe
   return { calls, strippedText: strippedText.trim() };
 }
 
+/** Language hint (from fenced block) -> default filename */
+const LANGUAGE_DEFAULT_PATH: Record<string, string> = {
+  c: 'hello.c',
+  cpp: 'main.cpp',
+  py: 'main.py',
+  python: 'main.py',
+  js: 'index.js',
+  javascript: 'index.js',
+  ts: 'index.ts',
+  typescript: 'index.ts',
+};
+
+const CREATE_FILE_INTENT =
+  /(?:make|create|write)\s+(?:a\s+)?(?:file|\.?\w+\.\w+)|write\s+.*\s+to\s+(?:a\s+)?file|put\s+.*\s+in\s+(?:a\s+)?file|file\s+(?:named\s+)?[\w.-]+\.\w+/i;
+
+/** Extract first fenced code block: optional language, then content. Returns { content, lang, start, end }. */
+function extractFirstCodeBlock(text: string): { content: string; lang: string; start: number; end: number } | null {
+  const open = /```(\w*)\n/g;
+  const match = open.exec(text);
+  if (!match) return null;
+  const start = match.index;
+  const lang = (match[1] || '').toLowerCase();
+  const afterOpen = match.index + match[0].length;
+  const closeIdx = text.indexOf('```', afterOpen);
+  if (closeIdx === -1) return null;
+  const content = text.slice(afterOpen, closeIdx);
+  const end = closeIdx + 3;
+  return { content, lang, start, end };
+}
+
+/**
+ * When the model replied with plain text (no tool tag), infer a single edit_file call if the user
+ * asked to create/write a file and the response contains a fenced code block.
+ */
+function inferEditFileFromResponse(
+  text: string,
+  lastUserContent: string
+): { call: ToolCall; strippedText: string } | null {
+  const user = lastUserContent.trim().toLowerCase();
+  if (!CREATE_FILE_INTENT.test(user)) return null;
+  const block = extractFirstCodeBlock(text);
+  if (!block || !block.content.trim()) return null;
+  let path: string | undefined;
+  // Prefer filename from user message: "file named X", "create X", "a file X"
+  const namedMatch = lastUserContent.match(/(?:named|called)\s+([\w.-]+\.\w+)/i);
+  if (namedMatch) path = namedMatch[1];
+  if (!path) {
+    const createMatch = lastUserContent.match(/(?:create|make|write)\s+([\w.-]+\.\w+)/i);
+    if (createMatch) path = createMatch[1];
+  }
+  if (!path) path = LANGUAGE_DEFAULT_PATH[block.lang] ?? 'output.txt';
+  const call: ToolCall = {
+    id: 'groq-heuristic-0',
+    name: 'edit_file',
+    args: { path, content: block.content },
+  };
+  const before = text.slice(0, block.start).trim();
+  const after = text.slice(block.end).trim();
+  const strippedText = [before, "I've created the file.", after].filter(Boolean).join('\n\n').trim();
+  return { call, strippedText };
+}
+
 export function createGroqAdapter(config: ProviderConfig, systemPrompt: string): LLMProvider {
   if (config.provider !== 'groq') throw new Error('createGroqAdapter requires provider groq');
   const client = new Groq({ apiKey: config.apiKey, maxRetries: 0 });
@@ -162,6 +230,16 @@ export function createGroqAdapter(config: ProviderConfig, systemPrompt: string):
         if (calls.length > 0) {
           out.functionCalls = calls;
           out.text = strippedText;
+        }
+      }
+      // Heuristic fallback: user asked to create/write a file and response has a code block
+      if (out.text && (!out.functionCalls || out.functionCalls.length === 0)) {
+        const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+        const lastUserContent = lastUser && 'content' in lastUser ? lastUser.content : '';
+        const inferred = inferEditFileFromResponse(out.text, lastUserContent);
+        if (inferred) {
+          out.functionCalls = [inferred.call];
+          out.text = inferred.strippedText;
         }
       }
       return out;
