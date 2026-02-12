@@ -2,9 +2,14 @@
 import { Command } from 'commander';
 import dotenv from 'dotenv';
 import chalk from 'chalk';
-import { Agent } from '../core/agent.js';
+import { Agent, SYSTEM_PROMPT } from '../core/agent.js';
+import { getFallbackConfig, requiresGemini, requiresGroq } from '../core/config.js';
+import { Router } from '../core/llm/router.js';
+import { createGeminiAdapter } from '../core/llm/adapters/gemini.js';
+import { createGroqAdapter } from '../core/llm/adapters/groq.js';
+import type { ProviderConfig } from '../core/config.js';
+import type { LLMProvider } from '../core/llm/types.js';
 
-// Load environment variables
 dotenv.config();
 
 const program = new Command();
@@ -20,20 +25,40 @@ program
   .option('-v, --verbose', 'Enable verbose logging')
   .action(async (options) => {
     try {
-      if (!process.env.API_KEY) {
-        console.error(chalk.red('Error: API_KEY is not set in .env file or environment variables.'));
+      if (requiresGemini() && !process.env.API_KEY?.trim()) {
+        console.error(chalk.red('Error: API_KEY is not set in .env (required for Gemini).'));
+        process.exit(1);
+      }
+      if (requiresGroq() && !process.env.GROQ_API_KEY?.trim()) {
+        console.warn(chalk.yellow('Warning: GROQ_API_KEY is not set; Groq fallback will be skipped.'));
+      }
+
+      const providerConfigs = getFallbackConfig();
+      if (providerConfigs.length === 0) {
+        console.error(chalk.red('Error: No provider configured. Set API_KEY and/or GROQ_API_KEY and ensure FALLBACK_MODELS (if set) includes valid providers.'));
         process.exit(1);
       }
 
+      const createAdapter = (config: ProviderConfig): LLMProvider => {
+        return config.provider === 'gemini'
+          ? createGeminiAdapter(config, SYSTEM_PROMPT)
+          : createGroqAdapter(config, SYSTEM_PROMPT);
+      };
+
+      const router = new Router({
+        providerConfigs,
+        createAdapter,
+        systemPrompt: SYSTEM_PROMPT,
+      });
+
       console.log(chalk.blue('Starting Gemini Code Agent...'));
-      
+
       const agent = new Agent({
-        apiKey: process.env.API_KEY,
-        verbose: options.verbose
+        router,
+        verbose: options.verbose,
       });
 
       await agent.start();
-      
     } catch (error: any) {
       console.error(chalk.red('Fatal Error:'), error.message);
       process.exit(1);
