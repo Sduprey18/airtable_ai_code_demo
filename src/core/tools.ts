@@ -5,20 +5,18 @@ import { execa } from 'execa';
 import { SafetyGuard } from '../utils/safety.js';
 import chalk from 'chalk';
 import { resolveProjectPath } from '../utils/path.js';
+import type { NeutralToolDef } from './llm/types.js';
 
-// -- Tool Definitions (Schema) --
+// -- Neutral tool schema (single source of truth) --
 
-export const toolsDef: FunctionDeclaration[] = [
+export const neutralToolsDef: NeutralToolDef[] = [
   {
     name: 'list_files',
     description: 'List files in a directory. Use this to explore the project structure.',
     parameters: {
-      type: Type.OBJECT,
+      type: 'object',
       properties: {
-        path: {
-          type: Type.STRING,
-          description: 'The relative path to list (e.g., "." for root, "src/" for src).',
-        },
+        path: { type: 'string', description: 'The relative path to list (e.g., "." for root, "src/" for src).' },
       },
       required: ['path'],
     },
@@ -27,12 +25,9 @@ export const toolsDef: FunctionDeclaration[] = [
     name: 'read_file',
     description: 'Read the content of a project-local file. Use this whenever the user references PRDs/specs or other files. You may call this multiple times to follow references to other files mentioned in the content. Do not guess file contents—always call this tool instead.',
     parameters: {
-      type: Type.OBJECT,
+      type: 'object',
       properties: {
-        path: {
-          type: Type.STRING,
-          description: 'The relative path of the file to read (must be inside the project workspace, e.g., "prd.txt" or "docs/api_spec.txt").',
-        },
+        path: { type: 'string', description: 'The relative path of the file to read (must be inside the project workspace, e.g., "prd.txt" or "docs/api_spec.txt").' },
       },
       required: ['path'],
     },
@@ -41,16 +36,10 @@ export const toolsDef: FunctionDeclaration[] = [
     name: 'edit_file',
     description: 'Create OR overwrite/update a project-local file with the provided full content (this works even if the file already exists). Use this to implement features by writing code changes to disk.',
     parameters: {
-      type: Type.OBJECT,
+      type: 'object',
       properties: {
-        path: {
-          type: Type.STRING,
-          description: 'The relative path of the file to create or overwrite (must be inside the project workspace).',
-        },
-        content: {
-          type: Type.STRING,
-          description: 'The full content to write to the file.',
-        },
+        path: { type: 'string', description: 'The relative path of the file to create or overwrite (must be inside the project workspace).' },
+        content: { type: 'string', description: 'The full content to write to the file.' },
       },
       required: ['path', 'content'],
     },
@@ -59,17 +48,55 @@ export const toolsDef: FunctionDeclaration[] = [
     name: 'run_command',
     description: 'Run a terminal command. Use this for git operations, npm installs, or running tests.',
     parameters: {
-      type: Type.OBJECT,
+      type: 'object',
       properties: {
-        command: {
-          type: Type.STRING,
-          description: 'The command to run.',
-        },
+        command: { type: 'string', description: 'The command to run.' },
       },
       required: ['command'],
     },
   },
 ];
+
+// -- Convert neutral schema to Gemini FunctionDeclaration[] --
+
+export function neutralToGemini(tools: NeutralToolDef[]): FunctionDeclaration[] {
+  return tools.map((t) => {
+    const props: Record<string, { type: unknown; description: string }> = {};
+    for (const [k, v] of Object.entries(t.parameters.properties)) {
+      props[k] = { type: (v as any).type === 'string' ? Type.STRING : Type.STRING, description: (v as any).description };
+    }
+    return {
+      name: t.name,
+      description: t.description,
+      parameters: {
+        type: Type.OBJECT,
+        properties: props,
+        required: t.parameters.required ?? [],
+      },
+    };
+  }) as FunctionDeclaration[];
+}
+
+// -- Convert neutral schema to OpenAI-style (for Groq) --
+
+export function neutralToOpenAI(tools: NeutralToolDef[]): Array<{ type: 'function'; function: { name: string; description: string; parameters: object } }> {
+  return tools.map((t) => ({
+    type: 'function' as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: {
+        type: 'object',
+        properties: t.parameters.properties,
+        required: t.parameters.required ?? [],
+      },
+    },
+  }));
+}
+
+// -- Legacy export: Gemini tools (used by Gemini adapter) --
+
+export const toolsDef: FunctionDeclaration[] = neutralToGemini(neutralToolsDef);
 
 // -- Tool Implementations --
 
