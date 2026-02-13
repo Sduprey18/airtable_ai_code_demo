@@ -4,7 +4,7 @@ import type { LLMProvider, NormalizedMessage, NeutralToolDef, ToolCall, TurnResp
 import { neutralToOpenAI } from '../../tools.js';
 
 const GROQ_TOOL_INSTRUCTION =
-  'When the user asks to create, write, or "make" a file (in any language or vaguely, e.g. "make a file in c that prints hello world"), you must actually create the file by outputting a single tool call in this exact format: <function=edit_file{"path":"filename.ext","content":"..."}> with the real path and full file content. Do not reply with only code and instructions—use this tool call so the file is created.';
+  'CRITICAL: Do not describe or explain that you will use tools. Do not say "I need to read the file" or "Let me call read_file". Just output the tool call. When the user mentions a file (e.g. hi.txt, prd.txt), immediately output: <function=read_file{"path":"filename"}> and nothing else for that step. When the user asks to create or write a file, output: <function=edit_file{"path":"filename.ext","content":"..."}> with real path and full content. Both formats accept optional parentheses: <function=name({"key":"value"})> is valid. No preamble or meta-commentary—only tool calls and minimal confirmation.';
 
 type GroqMessage =
   | { role: 'system'; content: string }
@@ -57,7 +57,7 @@ function parseArgs(argsStr: string): Record<string, unknown> {
 const PREFIX = '<function=';
 
 /**
- * Parse Groq's malformed tool syntax in text: <function=name{...}>.
+ * Parse Groq's malformed tool syntax: <function=name{...}> or <function=name({...})>.
  * Uses brace-matching for nested JSON. Returns tool calls and text with those segments replaced by a space.
  */
 function repairMalformedToolCalls(text: string): { calls: ToolCall[]; strippedText: string } {
@@ -84,8 +84,13 @@ function repairMalformedToolCalls(text: string): { calls: ToolCall[]; strippedTe
     }
     const name = text.slice(i, nameEnd);
     i = nameEnd;
-    // Skip whitespace
+    // Skip whitespace and optional opening parenthesis: name{...} or name({...})
     while (i < text.length && /\s/.test(text[i])) i++;
+    if (i >= text.length) continue;
+    if (text[i] === '(') {
+      i++;
+      while (i < text.length && /\s/.test(text[i])) i++;
+    }
     if (i >= text.length || text[i] !== '{') continue;
     const braceStart = i;
     let depth = 0;
@@ -103,6 +108,10 @@ function repairMalformedToolCalls(text: string): { calls: ToolCall[]; strippedTe
     const jsonStr = text.slice(braceStart, j + 1);
     i = j + 1;
     while (i < text.length && /\s/.test(text[i])) i++;
+    if (i < text.length && text[i] === ')') {
+      i++;
+      while (i < text.length && /\s/.test(text[i])) i++;
+    }
     if (i < text.length && text[i] === '>') i++;
     const end = i;
     const args = parseArgs(jsonStr);
